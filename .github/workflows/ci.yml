@@ -1,0 +1,82 @@
+name: Implementation Cooprecsys
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      retrain:
+        description: 'Trigger full retraining'
+        type: boolean
+        default: false
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  test:
+    name: Unit Tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Build Cython extensions
+        run: python _cy/setup.py build_ext --inplace
+      - name: Run tests
+        run: pytest tests/ -v --tb=short
+
+  lint:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install ruff black
+      - run: ruff check .
+      - run: black --check .
+
+  build-wheel:
+    name: Build Wheel
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install build Cython numpy
+      - run: python -m build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cooprecsys-wheel
+          path: dist/
+
+  retrain:
+    name: Model Retraining
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event.inputs.retrain == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install -r requirements.txt
+      - run: bash scripts/train.sh
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+          N_FACTORS: "128"
+          N_ITER: "30"
